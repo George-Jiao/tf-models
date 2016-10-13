@@ -81,37 +81,36 @@ def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, decay=0.999):
 
 def _Train(model, data_batcher):
   """Runs model training."""
-  with tf.device('/cpu:0'):
-    model.build_graph()
-    saver = tf.train.Saver()
-    # Train dir is different from log_root to avoid summary directory
-    # conflict with Supervisor.
-    summary_writer = tf.train.SummaryWriter(FLAGS.train_dir)
-    sv = tf.train.Supervisor(logdir=FLAGS.log_root,
-                             is_chief=True,
-                             saver=saver,
-                             summary_op=None,
-                             save_summaries_secs=60,
-                             save_model_secs=FLAGS.checkpoint_secs,
-                             global_step=model.global_step)
-    sess = sv.prepare_or_wait_for_session()
-    running_avg_loss = 0
-    step = 0
-    while not sv.should_stop() and step < FLAGS.max_run_steps:
-      (article_batch, abstract_batch, targets, article_lens, abstract_lens,
-       loss_weights, _, _) = data_batcher.NextBatch()
-      (_, summaries, loss, train_step) = model.run_train_step(
-          sess, article_batch, abstract_batch, targets, article_lens,
-          abstract_lens, loss_weights)
+  model.build_graph()
+  saver = tf.train.Saver()
+  # Train dir is different from log_root to avoid summary directory
+  # conflict with Supervisor.
+  summary_writer = tf.train.SummaryWriter(FLAGS.train_dir)
+  sv = tf.train.Supervisor(logdir=FLAGS.log_root,
+                           is_chief=True,
+                           saver=saver,
+                           summary_op=None,
+                           save_summaries_secs=60,
+                           save_model_secs=FLAGS.checkpoint_secs,
+                           global_step=model.global_step)
+  sess = sv.prepare_or_wait_for_session()
+  running_avg_loss = 0
+  step = 0
+  while not sv.should_stop() and step < FLAGS.max_run_steps:
+    (article_batch, abstract_batch, targets, article_lens, abstract_lens,
+     loss_weights, _, _) = data_batcher.NextBatch()
+    (_, summaries, loss, train_step) = model.run_train_step(
+        sess, article_batch, abstract_batch, targets, article_lens,
+        abstract_lens, loss_weights)
 
-      summary_writer.add_summary(summaries, train_step)
-      running_avg_loss = _RunningAvgLoss(
-          running_avg_loss, loss, summary_writer, train_step)
-      step += 1
-      if step % 100 == 0:
-        summary_writer.flush()
-    sv.Stop()
-    return running_avg_loss
+    summary_writer.add_summary(summaries, train_step)
+    running_avg_loss = _RunningAvgLoss(
+        running_avg_loss, loss, summary_writer, train_step)
+    step += 1
+    if step % 100 == 0:
+      summary_writer.flush()
+  sv.Stop()
+  return running_avg_loss
 
 
 def _Eval(model, data_batcher, vocab=None):
@@ -164,23 +163,23 @@ def main(unused_argv):
   assert vocab.WordToId(data.SENTENCE_START) > 0
   assert vocab.WordToId(data.SENTENCE_END) > 0
 
-  batch_size = 4
+  batch_size = 64
   if FLAGS.mode == 'decode':
     batch_size = FLAGS.beam_size
 
   hps = seq2seq_attention_model.HParams(
       mode=FLAGS.mode,  # train, eval, decode
-      min_lr=0.01,  # min learning rate.
-      lr=0.15,  # learning rate
+      min_lr=0.001,  # min learning rate.
+      lr=0.001,  # learning rate
       batch_size=batch_size,
-      enc_layers=4,
-      enc_timesteps=120,
-      dec_timesteps=30,
+      enc_layers=2,
+      enc_timesteps=50,
+      dec_timesteps=25,
       min_input_len=2,  # discard articles/summaries < than this
       num_hidden=256,  # for rnn cell
       emb_dim=128,  # If 0, don't use embedding
       max_grad_norm=2,
-      num_softmax_samples=4096)  # If 0, no sampled softmax.
+      num_softmax_samples=0)  # If 0, no sampled softmax.
 
   batcher = batch_reader.Batcher(
       FLAGS.data_path, vocab, hps, FLAGS.article_key,
@@ -209,4 +208,5 @@ def main(unused_argv):
 
 
 if __name__ == '__main__':
+  tf.logging.set_verbosity(tf.logging.INFO)
   tf.app.run()
