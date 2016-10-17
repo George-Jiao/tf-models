@@ -101,11 +101,11 @@ class Seq2SeqAttentionModel(object):
                                self._loss_weights: loss_weights})
 
   def _next_device(self):
-    """Round robin the gpu device. (Reserve last gpu for expensive op)."""
+    """Round robin the gpu device.."""
     if self._num_gpus == 0:
       return ''
     dev = '/gpu:%d' % self._cur_gpu
-    self._cur_gpu = (self._cur_gpu + 1) % (self._num_gpus-1)
+    self._cur_gpu = (self._cur_gpu + 1) % self._num_gpus
     return dev
 
   def _get_gpu(self, gpu_id):
