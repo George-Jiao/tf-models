@@ -21,9 +21,9 @@ use strict;
 
 
 
-my $OUTPUT_HOME = "/home/zxie/tf-models/textsum/log_root/decode/rouge/"; #where to generate output 
-my $DIR_SYSTEM="/home/zxie/tf-models/textsum/log_root/decode/system/"; # location of system generated files
-my $DIR_GOLD="/home/zxie/tf-models/textsum/log_root/decode/gold/"; # location of gold standard files
+my $OUTPUT_HOME = $ARGV[0]; #where to generate output
+my $DIR_SYSTEM= $ARGV[1]; # location of system generated files
+my $DIR_GOLD= $ARGV[2]; # location of gold standard files
 
 #`rm -r $OUTPUT_HOME `;
 
