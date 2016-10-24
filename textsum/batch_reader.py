@@ -39,7 +39,7 @@ class Batcher(object):
 
   def __init__(self, data_path, vocab, hps,
                article_key, abstract_key, max_article_sentences,
-               max_abstract_sentences, bucketing=True, truncate_input=False):
+               max_abstract_sentences, bucketing=True, truncate_input=False, num_epochs=None):
     """Batcher constructor.
 
     Args:
@@ -66,19 +66,23 @@ class Batcher(object):
     self._input_queue = Queue.Queue(QUEUE_NUM_BATCH * self._hps.batch_size)
     self._bucket_input_queue = Queue.Queue(QUEUE_NUM_BATCH)
     self._input_threads = []
-    for _ in xrange(1):
-      self._input_threads.append(Thread(target=self._FillInputQueue))
-      self._input_threads[-1].daemon = True
-      self._input_threads[-1].start()
-    self._bucketing_threads = []
-    for _ in xrange(1):
-      self._bucketing_threads.append(Thread(target=self._FillBucketInputQueue))
-      self._bucketing_threads[-1].daemon = True
-      self._bucketing_threads[-1].start()
+    self._num_epochs = num_epochs
+    #for _ in xrange(1):
+      #self._input_threads.append(Thread(target=self._FillInputQueue))
+      #self._input_threads[-1].daemon = True
+      #self._input_threads[-1].start()
+    #self._bucketing_threads = []
+    #for _ in xrange(1):
+      #self._bucketing_threads.append(Thread(target=self._FillBucketInputQueue))
+      #self._bucketing_threads[-1].daemon = True
+      #self._bucketing_threads[-1].start()
 
-    self._watch_thread = Thread(target=self._WatchThreads)
-    self._watch_thread.daemon = True
-    self._watch_thread.start()
+    #self._watch_thread = Thread(target=self._WatchThreads)
+    #self._watch_thread.daemon = True
+    #self._watch_thread.start()
+
+    self._FillInputQueue()
+    self._FillBucketInputQueue()
 
   def NextBatch(self):
     """Returns a batch of inputs for seq2seq attention model.
@@ -108,7 +112,10 @@ class Batcher(object):
     origin_articles = ['None'] * self._hps.batch_size
     origin_abstracts = ['None'] * self._hps.batch_size
 
-    buckets = self._bucket_input_queue.get()
+    try:
+      buckets = self._bucket_input_queue.get(False)
+    except Queue.Empty:
+      raise
     for i in xrange(self._hps.batch_size):
       (enc_inputs, dec_inputs, targets, enc_input_len, dec_output_len,
        article, abstract) = buckets[i]
@@ -130,9 +137,10 @@ class Batcher(object):
     start_id = self._vocab.WordToId(data.SENTENCE_START)
     end_id = self._vocab.WordToId(data.SENTENCE_END)
     pad_id = self._vocab.WordToId(data.PAD_TOKEN)
-    input_gen = self._TextGenerator(data.ExampleGen(self._data_path))
-    while True:
-      (article, abstract) = input_gen.next()
+    input_gen = self._TextGenerator(data.ExampleGen(self._data_path, num_epochs=self._num_epochs))
+    #while True:
+    for (article, abstract) in input_gen:
+      #(article, abstract) = input_gen.next()
       article_sentences = [sent.strip() for sent in
                            data.ToSentences(article, include_token=False)]
       abstract_sentences = [sent.strip() for sent in
@@ -196,10 +204,16 @@ class Batcher(object):
 
   def _FillBucketInputQueue(self):
     """Fill bucketed batches into the bucket_input_queue."""
-    while True:
+    queue_gets = 0
+    break_outer = False
+    while not break_outer:
       inputs = []
       for _ in xrange(self._hps.batch_size * BUCKET_CACHE_BATCH):
-        inputs.append(self._input_queue.get())
+        try:
+          inputs.append(self._input_queue.get(False))
+        except Queue.Empty:
+          break_outer = True
+          break
       if self._bucketing:
         inputs = sorted(inputs, key=lambda inp: inp.enc_len)
 

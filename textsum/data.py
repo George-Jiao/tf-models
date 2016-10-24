@@ -90,9 +90,9 @@ def ExampleGen(data_path, num_epochs=None):
   while True:
     if num_epochs is not None and epoch >= num_epochs:
       break
-    filelist = glob.glob(data_path)
+    filelist = sorted(glob.glob(data_path))
     assert filelist, 'Empty filelist.'
-    random.shuffle(filelist)
+    #random.shuffle(filelist)
     for f in filelist:
       reader = open(f, 'rb')
       while True:

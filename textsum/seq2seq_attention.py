@@ -23,6 +23,7 @@ Beyond."
 """
 import sys
 import time
+import Queue
 
 import tensorflow as tf
 import batch_reader
@@ -93,12 +94,16 @@ def _Train(model, data_batcher):
                            save_summaries_secs=60,
                            save_model_secs=FLAGS.checkpoint_secs,
                            global_step=model.global_step)
-  sess = sv.prepare_or_wait_for_session()
+  sess = sv.prepare_or_wait_for_session(config=tf.ConfigProto(
+      allow_soft_placement=True))
   running_avg_loss = 0
   step = 0
   while not sv.should_stop() and step < FLAGS.max_run_steps:
-    (article_batch, abstract_batch, targets, article_lens, abstract_lens,
-     loss_weights, _, _) = data_batcher.NextBatch()
+    try:
+      (article_batch, abstract_batch, targets, article_lens, abstract_lens,
+       loss_weights, _, _) = data_batcher.NextBatch()
+    except Queue.Empty:
+      break
     (_, summaries, loss, train_step) = model.run_train_step(
         sess, article_batch, abstract_batch, targets, article_lens,
         abstract_lens, loss_weights)
@@ -136,8 +141,11 @@ def _Eval(model, data_batcher, vocab=None):
     tf.logging.info('Loading checkpoint %s', ckpt_state.model_checkpoint_path)
     saver.restore(sess, ckpt_state.model_checkpoint_path)
 
-    (article_batch, abstract_batch, targets, article_lens, abstract_lens,
-     loss_weights, _, _) = data_batcher.NextBatch()
+    try:
+      (article_batch, abstract_batch, targets, article_lens, abstract_lens,
+       loss_weights, _, _) = data_batcher.NextBatch()
+    except Queue.Empty:
+      break
     (summaries, loss, train_step) = model.run_eval_step(
         sess, article_batch, abstract_batch, targets, article_lens,
         abstract_lens, loss_weights)
@@ -181,11 +189,15 @@ def main(unused_argv):
       max_grad_norm=2,
       num_softmax_samples=0)  # If 0, no sampled softmax.
 
+  num_epochs = None
+  if hps.mode != "train":
+    num_epochs = 1
   batcher = batch_reader.Batcher(
       FLAGS.data_path, vocab, hps, FLAGS.article_key,
       FLAGS.abstract_key, FLAGS.max_article_sentences,
       FLAGS.max_abstract_sentences, bucketing=FLAGS.use_bucketing,
-      truncate_input=FLAGS.truncate_input)
+      truncate_input=FLAGS.truncate_input,
+      num_epochs=num_epochs)
   tf.set_random_seed(FLAGS.random_seed)
 
   if hps.mode == 'train':
