@@ -218,7 +218,9 @@ class Batcher(object):
         inputs = sorted(inputs, key=lambda inp: inp.enc_len)
 
       batches = []
-      for i in xrange(0, len(inputs), self._hps.batch_size):
+      # FIXME Currently skips last % batch_size examples
+      for i in xrange(0, len(inputs) - (len(inputs) % self._hps.batch_size),
+              self._hps.batch_size):
         batches.append(inputs[i:i+self._hps.batch_size])
       #shuffle(batches)
       for b in batches:

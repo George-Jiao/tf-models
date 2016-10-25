@@ -53,6 +53,8 @@ tf.app.flags.DEFINE_integer('max_article_sentences', 2,
 tf.app.flags.DEFINE_integer('max_abstract_sentences', 100,
                             'Max number of first sentences to use from the '
                             'abstract')
+tf.app.flags.DEFINE_integer('epochs', 1,
+                            'number of epochs to train for.')
 tf.app.flags.DEFINE_integer('beam_size', 4,
                             'beam size for beam search decoding.')
 tf.app.flags.DEFINE_integer('eval_interval_secs', 60, 'How often to run eval.')
@@ -65,8 +67,9 @@ tf.app.flags.DEFINE_bool('truncate_input', False,
 tf.app.flags.DEFINE_integer('num_gpus', 0, 'Number of gpus used.')
 tf.app.flags.DEFINE_integer('random_seed', 111, 'A seed value for randomness.')
 
+AVG_LOSS_DECAY = 0.99
 
-def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, decay=0.999):
+def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, epoch=None, decay=AVG_LOSS_DECAY):
   """Calculate the running average of losses."""
   if running_avg_loss == 0:
     running_avg_loss = loss
@@ -76,26 +79,15 @@ def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, decay=0.999):
   loss_sum = tf.Summary()
   loss_sum.value.add(tag='running_avg_loss', simple_value=running_avg_loss)
   summary_writer.add_summary(loss_sum, step)
-  sys.stdout.write('running_avg_loss: %f\n' % running_avg_loss)
+  msg = "step %d\trunning_avg_loss: %f\n" % (step, running_avg_loss)
+  if epoch is not None:
+    msg = ("epoch %d\t" % epoch) + msg
+  sys.stdout.write(msg)
   return running_avg_loss
 
 
-def _Train(model, data_batcher):
+def _Train(sess, model, data_batcher, sv, saver, summary_writer, epoch):
   """Runs model training."""
-  model.build_graph()
-  saver = tf.train.Saver()
-  # Train dir is different from log_root to avoid summary directory
-  # conflict with Supervisor.
-  summary_writer = tf.train.SummaryWriter(FLAGS.train_dir)
-  sv = tf.train.Supervisor(logdir=FLAGS.log_root,
-                           is_chief=True,
-                           saver=saver,
-                           summary_op=None,
-                           save_summaries_secs=60,
-                           save_model_secs=FLAGS.checkpoint_secs,
-                           global_step=model.global_step)
-  sess = sv.prepare_or_wait_for_session(config=tf.ConfigProto(
-      allow_soft_placement=True))
   running_avg_loss = 0
   step = 0
   while not sv.should_stop() and step < FLAGS.max_run_steps:
@@ -110,11 +102,10 @@ def _Train(model, data_batcher):
 
     summary_writer.add_summary(summaries, train_step)
     running_avg_loss = _RunningAvgLoss(
-        running_avg_loss, loss, summary_writer, train_step)
+        running_avg_loss, loss, summary_writer, train_step, epoch=epoch)
     step += 1
     if step % 100 == 0:
       summary_writer.flush()
-  sv.Stop()
   return running_avg_loss
 
 
@@ -146,7 +137,7 @@ def _Eval(model, data_batcher, vocab=None):
        loss_weights, _, _) = data_batcher.NextBatch()
     except Queue.Empty:
       break
-    (summaries, loss, train_step) = model.run_eval_step(
+    (summaries, loss, eval_step) = model.run_eval_step(
         sess, article_batch, abstract_batch, targets, article_lens,
         abstract_lens, loss_weights)
     tf.logging.info(
@@ -156,9 +147,9 @@ def _Eval(model, data_batcher, vocab=None):
         'abstract: %s',
         ' '.join(data.Ids2Words(abstract_batch[0][:].tolist(), vocab)))
 
-    summary_writer.add_summary(summaries, train_step)
+    summary_writer.add_summary(summaries, eval_step)
     running_avg_loss = _RunningAvgLoss(
-        running_avg_loss, loss, summary_writer, train_step)
+        running_avg_loss, loss, summary_writer, eval_step)
     if step % 100 == 0:
       summary_writer.flush()
 
@@ -189,25 +180,41 @@ def main(unused_argv):
       max_grad_norm=2,
       num_softmax_samples=0)  # If 0, no sampled softmax.
 
-  num_epochs = None
+  num_epochs = FLAGS.epochs
   if hps.mode != "train":
     num_epochs = 1
-  batcher = batch_reader.Batcher(
+  get_batcher = lambda: batch_reader.Batcher(
       FLAGS.data_path, vocab, hps, FLAGS.article_key,
       FLAGS.abstract_key, FLAGS.max_article_sentences,
       FLAGS.max_abstract_sentences, bucketing=FLAGS.use_bucketing,
-      truncate_input=FLAGS.truncate_input,
-      num_epochs=num_epochs)
+      truncate_input=FLAGS.truncate_input, num_epochs=1)
   tf.set_random_seed(FLAGS.random_seed)
 
   if hps.mode == 'train':
     model = seq2seq_attention_model.Seq2SeqAttentionModel(
         hps, vocab, num_gpus=FLAGS.num_gpus)
-    _Train(model, batcher)
+    model.build_graph()
+    saver = tf.train.Saver()
+    sv = tf.train.Supervisor(logdir=FLAGS.log_root,
+                             is_chief=True,
+                             saver=saver,
+                             summary_op=None,
+                             save_summaries_secs=60,
+                             save_model_secs=FLAGS.checkpoint_secs,
+                             global_step=model.global_step)
+    sess = sv.prepare_or_wait_for_session(config=tf.ConfigProto(
+        allow_soft_placement=True))
+    # Train dir is different from log_root to avoid summary directory
+    # conflict with Supervisor.
+    summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, graph=sess.graph)
+    for epoch in xrange(num_epochs):
+      print("epoch %d" % epoch)
+      _Train(sess, model, get_batcher(), sv, saver, summary_writer, epoch=epoch)
+    sv.Stop()
   elif hps.mode == 'eval':
     model = seq2seq_attention_model.Seq2SeqAttentionModel(
         hps, vocab, num_gpus=FLAGS.num_gpus)
-    _Eval(model, batcher, vocab=vocab)
+    _Eval(model, get_batcher(), vocab=vocab)
   elif hps.mode == 'decode':
     decode_mdl_hps = hps
     # Only need to restore the 1st step and reuse it since
@@ -215,7 +222,7 @@ def main(unused_argv):
     decode_mdl_hps = hps._replace(dec_timesteps=1)
     model = seq2seq_attention_model.Seq2SeqAttentionModel(
         decode_mdl_hps, vocab, num_gpus=FLAGS.num_gpus)
-    decoder = seq2seq_attention_decode.BSDecoder(model, batcher, hps, vocab)
+    decoder = seq2seq_attention_decode.BSDecoder(model, get_batcher(), hps, vocab)
     decoder.DecodeLoop()
 
 
