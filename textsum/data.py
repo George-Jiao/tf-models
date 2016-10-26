@@ -19,6 +19,7 @@ import glob
 import random
 import struct
 import sys
+import time
 
 from tensorflow.core.example import example_pb2
 
@@ -93,6 +94,8 @@ def ExampleGen(data_path, num_epochs=None):
     filelist = sorted(glob.glob(data_path))
     assert filelist, 'Empty filelist.'
     #random.shuffle(filelist)
+    example_strs = list()
+    tic = time.time()
     for f in filelist:
       reader = open(f, 'rb')
       while True:
@@ -100,7 +103,11 @@ def ExampleGen(data_path, num_epochs=None):
         if not len_bytes: break
         str_len = struct.unpack('q', len_bytes)[0]
         example_str = struct.unpack('%ds' % str_len, reader.read(str_len))[0]
-        yield example_pb2.Example.FromString(example_str)
+        example_strs.append(example_str)
+    toc = time.time()
+    print("Took %fs to read all examples" % (toc-tic))
+    for example_str in example_strs:
+      yield example_pb2.Example.FromString(example_str)
 
     epoch += 1
 

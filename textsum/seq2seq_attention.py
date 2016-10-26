@@ -69,7 +69,7 @@ tf.app.flags.DEFINE_integer('random_seed', 111, 'A seed value for randomness.')
 
 AVG_LOSS_DECAY = 0.99
 
-def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, epoch=None, decay=AVG_LOSS_DECAY):
+def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, epoch=None, decay=AVG_LOSS_DECAY, fetch_time=None, run_time=None):
   """Calculate the running average of losses."""
   if running_avg_loss == 0:
     running_avg_loss = loss
@@ -79,10 +79,13 @@ def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, epoch=None, de
   loss_sum = tf.Summary()
   loss_sum.value.add(tag='running_avg_loss', simple_value=running_avg_loss)
   summary_writer.add_summary(loss_sum, step)
-  msg = "step %d\trunning_avg_loss: %f\n" % (step, running_avg_loss)
+  msg = "step %d | running_avg_loss: %f" % (step, running_avg_loss)
   if epoch is not None:
-    msg = ("epoch %d\t" % epoch) + msg
-  sys.stdout.write(msg)
+    msg = ("epoch %d | " % epoch) + msg
+  if fetch_time is not None:
+    assert run_time is not None
+    msg = msg + " | fetch_time: %f | run_time: %f" % (fetch_time, run_time)
+  sys.stdout.write(msg + "\n")
   return running_avg_loss
 
 
@@ -91,18 +94,24 @@ def _Train(sess, model, data_batcher, sv, saver, summary_writer, epoch):
   running_avg_loss = 0
   step = 0
   while not sv.should_stop() and step < FLAGS.max_run_steps:
+    tic = time.time()
     try:
       (article_batch, abstract_batch, targets, article_lens, abstract_lens,
        loss_weights, _, _) = data_batcher.NextBatch()
     except Queue.Empty:
       break
+    toc = time.time()
+    fetch_time = toc - tic
+    tic = time.time()
     (_, summaries, loss, train_step) = model.run_train_step(
         sess, article_batch, abstract_batch, targets, article_lens,
         abstract_lens, loss_weights)
+    toc = time.time()
+    run_time = toc - tic
 
     summary_writer.add_summary(summaries, train_step)
     running_avg_loss = _RunningAvgLoss(
-        running_avg_loss, loss, summary_writer, train_step, epoch=epoch)
+        running_avg_loss, loss, summary_writer, train_step, epoch=epoch, fetch_time=fetch_time, run_time=run_time)
     step += 1
     if step % 100 == 0:
       summary_writer.flush()
@@ -191,6 +200,7 @@ def main(unused_argv):
   tf.set_random_seed(FLAGS.random_seed)
 
   if hps.mode == 'train':
+    tic = time.time()
     model = seq2seq_attention_model.Seq2SeqAttentionModel(
         hps, vocab, num_gpus=FLAGS.num_gpus)
     model.build_graph()
@@ -204,12 +214,17 @@ def main(unused_argv):
                              global_step=model.global_step)
     sess = sv.prepare_or_wait_for_session(config=tf.ConfigProto(
         allow_soft_placement=True))
+    toc = time.time()
+    print("Took %fs to set up model and session" % (toc-tic))
     # Train dir is different from log_root to avoid summary directory
     # conflict with Supervisor.
-    summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, graph=sess.graph)
-    for epoch in xrange(num_epochs):
-      print("epoch %d" % epoch)
+    #summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, graph=sess.graph)
+    summary_writer = tf.train.SummaryWriter(FLAGS.train_dir)
+    for epoch in xrange(1, num_epochs+1):
+      tic = time.time()
       _Train(sess, model, get_batcher(), sv, saver, summary_writer, epoch=epoch)
+      toc = time.time()
+      print("Epochs %d took %fs" % (epoch, toc-tic))
     sv.Stop()
   elif hps.mode == 'eval':
     model = seq2seq_attention_model.Seq2SeqAttentionModel(
