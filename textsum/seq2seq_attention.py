@@ -260,15 +260,15 @@ def main(unused_argv):
       save_path = saver.save(sess, pjoin(FLAGS.log_root, "model_epoch%d.ckpt" % epoch))
       logging.info("Saved model to %s" % save_path)
       # Symlink model.ckpt to the latest saved model
-      subprocess.check_call("ln -s %s %s" % (save_path, ckpt_path), shell=True)
+      subprocess.check_call("ln -sf %s %s" % (save_path, ckpt_path), shell=True)
       # NOTE Lose last mod batch_size examples here
       eval_cost = _Eval(sess, model, get_batch_reader(TRAIN_EVAL_DATA_PATH), vocab=vocab)
       logging.info("Epoch %d eval cost: %f" % (epoch, eval_cost))
       if eval_cost > prev_eval_cost:
         # Load model from previous epoch
         # Anneal by using model.set_lr
-        pass
-        eval_cost = prev_eval_cost
+        break
+      eval_cost = prev_eval_cost
     sv.Stop()
   elif hps.mode == 'eval':
     model = seq2seq_attention_model.Seq2SeqAttentionModel(

@@ -6,4 +6,4 @@ CUDA_VISIBLE_DEVICES=0 ../bazel-bin/textsum/seq2seq_attention \
   --vocab_path=data/giga.vocab \
   --log_root=log_root_sandbox \
   --num_gpus 1 \
-  --epochs 5
+  --epochs 100

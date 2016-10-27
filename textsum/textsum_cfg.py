@@ -5,8 +5,8 @@ BUCKET_CACHE_BATCH = 10
 # Maximum number
 QUEUE_NUM_BATCH = 1000
 
-#TRAIN_DATA_PATH = "data/giga.train"
-TRAIN_DATA_PATH = "data/giga.4321.train"
+TRAIN_DATA_PATH = "data/giga.train"
+#TRAIN_DATA_PATH = "data/giga.4321.train"
 # Just use this since all of validation too slow
 # to run at end of every epoch
 TRAIN_EVAL_DATA_PATH ="data/giga.4000.valid"
