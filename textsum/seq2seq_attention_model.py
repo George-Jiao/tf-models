@@ -21,6 +21,7 @@ import numpy as np
 import tensorflow as tf
 import seq2seq_lib
 
+import logging
 
 HParams = namedtuple('HParams',
                      'mode, min_lr, lr, batch_size, '
@@ -212,7 +213,7 @@ class Seq2SeqAttentionModel(object):
       if hps.mode == 'decode':
         with tf.variable_scope('decode_output'), tf.device('/cpu:0'):
           best_outputs = [tf.argmax(x, 1) for x in model_outputs]
-          tf.logging.info('best_outputs%s', best_outputs[0].get_shape())
+          logging.info('best_outputs%s', best_outputs[0].get_shape())
           self._outputs = tf.concat(
               1, [tf.reshape(x, [hps.batch_size, 1]) for x in best_outputs])
 
@@ -234,13 +235,16 @@ class Seq2SeqAttentionModel(object):
               model_outputs, targets, loss_weights)
         tf.scalar_summary('loss', tf.minimum(12.0, self._loss))
 
+  def set_lr(self, sess, lr_value):
+    session.run(tf.assign(self._lr_rate, lr_value))
+
   def _add_train_op(self):
     """Sets self._train_op, op to run for training."""
     hps = self._hps
 
-    self._lr_rate = hps.lr #tf.maximum(
-        #hps.min_lr,  # min_lr_rate.
-        #tf.train.exponential_decay(hps.lr, self.global_step, 30000, 0.98))
+    self._lr_rate = tf.Variable(hps.lr, trainable=False)
+    #tf.maximum(hps.min_lr,  # min_lr_rate.
+    #tf.train.exponential_decay(hps.lr, self.global_step, 30000, 0.98))
 
     tvars = tf.trainable_variables()
     with tf.device(self._get_gpu(self._num_gpus-1)):

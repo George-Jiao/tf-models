@@ -5,6 +5,13 @@ Authors:
 Xin Pan (xpan@google.com, github:panyx0718),
 Peter Liu (peterjliu@google.com, github:peterjliu)
 
+<b>Instructions for Modified Code</b>
+
+See `textsum_train.sh`, `textsum_eval.sh`, and `textsum_decode.sh`.
+
+After decoding, run `convert_and_score_rouge.py` (see comments in file).
+You'll need  the ROUGE-1.5.5.pl script, which you can Google for.
+
 <b>Introduction</b>
 
 The core model is the traditional sequence-to-sequence model with attention.

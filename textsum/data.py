@@ -20,6 +20,7 @@ import random
 import struct
 import sys
 import time
+import logging
 
 from tensorflow.core.example import example_pb2
 
@@ -105,7 +106,7 @@ def ExampleGen(data_path, num_epochs=None):
         example_str = struct.unpack('%ds' % str_len, reader.read(str_len))[0]
         example_strs.append(example_str)
     toc = time.time()
-    print("Took %fs to read all examples" % (toc-tic))
+    logging.info("Took %fs to read all examples" % (toc-tic))
     for example_str in example_strs:
       yield example_pb2.Example.FromString(example_str)
 

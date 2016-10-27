@@ -21,19 +21,28 @@ Implement "Abstractive Text Summarization using Sequence-to-sequence RNNS and
 Beyond."
 
 """
+import os
 import sys
 import time
 import Queue
+from os.path import join as pjoin
+import subprocess
 
 import tensorflow as tf
+import numpy as np
 import batch_reader
 import data
 import seq2seq_attention_decode
 import seq2seq_attention_model
 
+from textsum_cfg import TRAIN_DATA_PATH
+from textsum_cfg import TRAIN_EVAL_DATA_PATH
+from textsum_cfg import EVAL_DATA_PATH
+from textsum_cfg import DECODE_DATA_PATH
+
+import logging
+
 FLAGS = tf.app.flags.FLAGS
-tf.app.flags.DEFINE_string('data_path',
-                           '', 'Path expression to tf.Example.')
 tf.app.flags.DEFINE_string('vocab_path',
                            '', 'Path expression to text vocabulary file.')
 tf.app.flags.DEFINE_string('article_key', 'article',
@@ -41,8 +50,6 @@ tf.app.flags.DEFINE_string('article_key', 'article',
 tf.app.flags.DEFINE_string('abstract_key', 'headline',
                            'tf.Example feature key for abstract.')
 tf.app.flags.DEFINE_string('log_root', '', 'Directory for model root.')
-tf.app.flags.DEFINE_string('train_dir', '', 'Directory for train.')
-tf.app.flags.DEFINE_string('eval_dir', '', 'Directory for eval.')
 tf.app.flags.DEFINE_string('decode_dir', '', 'Directory for decode summaries.')
 tf.app.flags.DEFINE_string('mode', 'train', 'train/eval/decode mode')
 tf.app.flags.DEFINE_integer('max_run_steps', 10000000,
@@ -57,10 +64,6 @@ tf.app.flags.DEFINE_integer('epochs', 1,
                             'number of epochs to train for.')
 tf.app.flags.DEFINE_integer('beam_size', 4,
                             'beam size for beam search decoding.')
-tf.app.flags.DEFINE_integer('eval_interval_secs', 60, 'How often to run eval.')
-tf.app.flags.DEFINE_integer('checkpoint_secs', 60, 'How often to checkpoint.')
-tf.app.flags.DEFINE_bool('use_bucketing', False,
-                         'Whether bucket articles of similar length.')
 tf.app.flags.DEFINE_bool('truncate_input', False,
                          'Truncate inputs that are too long. If False, '
                          'examples that are too long are discarded.')
@@ -69,7 +72,8 @@ tf.app.flags.DEFINE_integer('random_seed', 111, 'A seed value for randomness.')
 
 AVG_LOSS_DECAY = 0.99
 
-def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, epoch=None, decay=AVG_LOSS_DECAY, fetch_time=None, run_time=None):
+def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, epoch=None,
+        decay=AVG_LOSS_DECAY, fetch_time=None, run_time=None):
   """Calculate the running average of losses."""
   if running_avg_loss == 0:
     running_avg_loss = loss
@@ -78,14 +82,15 @@ def _RunningAvgLoss(loss, running_avg_loss, summary_writer, step, epoch=None, de
   running_avg_loss = min(running_avg_loss, 12)
   loss_sum = tf.Summary()
   loss_sum.value.add(tag='running_avg_loss', simple_value=running_avg_loss)
-  summary_writer.add_summary(loss_sum, step)
+  if summary_writer is not None:
+    summary_writer.add_summary(loss_sum, step)
   msg = "step %d | running_avg_loss: %f" % (step, running_avg_loss)
   if epoch is not None:
     msg = ("epoch %d | " % epoch) + msg
   if fetch_time is not None:
     assert run_time is not None
     msg = msg + " | fetch_time: %f | run_time: %f" % (fetch_time, run_time)
-  sys.stdout.write(msg + "\n")
+  logging.info(msg)
   return running_avg_loss
 
 
@@ -118,58 +123,76 @@ def _Train(sess, model, data_batcher, sv, saver, summary_writer, epoch):
   return running_avg_loss
 
 
-def _Eval(model, data_batcher, vocab=None):
+def _Eval(sess, model, data_batcher, vocab=None):
   """Runs model eval."""
-  model.build_graph()
-  saver = tf.train.Saver()
   summary_writer = tf.train.SummaryWriter(FLAGS.eval_dir)
-  sess = tf.Session(config=tf.ConfigProto(allow_soft_placement=True))
   running_avg_loss = 0
   step = 0
+  total_weights = 0.0
+  total_loss = 0.0
   while True:
-    time.sleep(FLAGS.eval_interval_secs)
-    try:
-      ckpt_state = tf.train.get_checkpoint_state(FLAGS.log_root)
-    except tf.errors.OutOfRangeError as e:
-      tf.logging.error('Cannot restore checkpoint: %s', e)
-      continue
-
-    if not (ckpt_state and ckpt_state.model_checkpoint_path):
-      tf.logging.info('No model to eval yet at %s', FLAGS.train_dir)
-      continue
-
-    tf.logging.info('Loading checkpoint %s', ckpt_state.model_checkpoint_path)
-    saver.restore(sess, ckpt_state.model_checkpoint_path)
-
+    tic = time.time()
     try:
       (article_batch, abstract_batch, targets, article_lens, abstract_lens,
        loss_weights, _, _) = data_batcher.NextBatch()
     except Queue.Empty:
       break
+    toc = time.time()
+    fetch_time = toc - tic
+    tic = time.time()
+    # NOTE eval_step is just current train_step
     (summaries, loss, eval_step) = model.run_eval_step(
         sess, article_batch, abstract_batch, targets, article_lens,
         abstract_lens, loss_weights)
-    tf.logging.info(
+    toc = time.time()
+    run_time = toc - tic
+    sum_weights = np.sum(loss_weights)
+    total_weights += sum_weights
+    total_loss += sum_weights * loss
+
+    # Just prints first of the batch
+    logging.debug(
         'article:  %s',
         ' '.join(data.Ids2Words(article_batch[0][:].tolist(), vocab)))
-    tf.logging.info(
+    logging.debug(
         'abstract: %s',
         ' '.join(data.Ids2Words(abstract_batch[0][:].tolist(), vocab)))
 
-    summary_writer.add_summary(summaries, eval_step)
+    # Only write one loss summary at the end
+    #summary_writer.add_summary(summaries, eval_step)
     running_avg_loss = _RunningAvgLoss(
-        running_avg_loss, loss, summary_writer, eval_step)
-    if step % 100 == 0:
-      summary_writer.flush()
+        running_avg_loss, loss, None, eval_step,
+        fetch_time=fetch_time, run_time=run_time)
+    #if step % 100 == 0:
+      #summary_writer.flush()
+
+  weighted_avg_loss = total_loss / float(total_weights)
+  loss_sum = tf.Summary()
+  loss_sum.value.add(tag="loss", simple_value=weighted_avg_loss)
+  summary_writer.add_summary(loss_sum, eval_step)
+  summary_writer.flush()
+  return weighted_avg_loss
 
 
 def main(unused_argv):
   vocab = data.Vocab(FLAGS.vocab_path, 1000000)
+  print("%d words in vocab" % vocab.NumIds())
   # Check for presence of required special tokens.
   assert vocab.WordToId(data.PAD_TOKEN) > 0
   assert vocab.WordToId(data.UNKNOWN_TOKEN) >= 0
   assert vocab.WordToId(data.SENTENCE_START) > 0
   assert vocab.WordToId(data.SENTENCE_END) > 0
+
+  FLAGS.train_dir = pjoin(FLAGS.log_root, "train")
+  FLAGS.eval_dir = pjoin(FLAGS.log_root, "eval")
+  # We'll specify decode directory in flags
+  #FLAGS.decode_dir = pjoin(FLAGS.log_root, "decode")
+
+  if not os.path.exists(FLAGS.log_root):
+    os.mkdir(FLAGS.log_root)
+  file_handler = logging.FileHandler(pjoin(FLAGS.log_root, "log.txt"))
+  logging.getLogger().addHandler(file_handler)
+  logging.info(FLAGS)
 
   batch_size = 64
   if FLAGS.mode == 'decode':
@@ -192,12 +215,15 @@ def main(unused_argv):
   num_epochs = FLAGS.epochs
   if hps.mode != "train":
     num_epochs = 1
-  get_batcher = lambda: batch_reader.Batcher(
-      FLAGS.data_path, vocab, hps, FLAGS.article_key,
+  get_batch_reader = lambda path: batch_reader.Batcher(
+      path, vocab, hps, FLAGS.article_key,
       FLAGS.abstract_key, FLAGS.max_article_sentences,
-      FLAGS.max_abstract_sentences, bucketing=FLAGS.use_bucketing,
+      FLAGS.max_abstract_sentences, bucketing=(FLAGS.mode == "train"),
       truncate_input=FLAGS.truncate_input, num_epochs=1)
+  ckpt_path = pjoin(FLAGS.log_root, "model.ckpt")
+
   tf.set_random_seed(FLAGS.random_seed)
+  np.random.seed(FLAGS.random_seed)
 
   if hps.mode == 'train':
     tic = time.time()
@@ -207,29 +233,53 @@ def main(unused_argv):
     saver = tf.train.Saver()
     sv = tf.train.Supervisor(logdir=FLAGS.log_root,
                              is_chief=True,
-                             saver=saver,
+                             saver=None,
                              summary_op=None,
-                             save_summaries_secs=60,
-                             save_model_secs=FLAGS.checkpoint_secs,
+                             save_summaries_secs=None,  # We do this manually
+                             save_model_secs=None,  # We do this manually
                              global_step=model.global_step)
     sess = sv.prepare_or_wait_for_session(config=tf.ConfigProto(
         allow_soft_placement=True))
+
+    total_params = np.sum([np.prod(v.get_shape()) for v in tf.trainable_variables()])
+    logging.info("%d total parameters" % total_params)
+
     toc = time.time()
-    print("Took %fs to set up model and session" % (toc-tic))
+    logging.info("Took %fs to set up model and session" % (toc-tic))
     # Train dir is different from log_root to avoid summary directory
     # conflict with Supervisor.
     #summary_writer = tf.train.SummaryWriter(FLAGS.train_dir, graph=sess.graph)
     summary_writer = tf.train.SummaryWriter(FLAGS.train_dir)
+    prev_eval_cost = _Eval(sess, model, get_batch_reader(TRAIN_EVAL_DATA_PATH), vocab=vocab)
+    logging.info("Epoch 0 eval cost: %f" % prev_eval_cost)
     for epoch in xrange(1, num_epochs+1):
       tic = time.time()
-      _Train(sess, model, get_batcher(), sv, saver, summary_writer, epoch=epoch)
+      _Train(sess, model, get_batch_reader(TRAIN_DATA_PATH), sv, saver, summary_writer, epoch=epoch)
       toc = time.time()
-      print("Epochs %d took %fs" % (epoch, toc-tic))
+      logging.info("Epochs %d took %fs" % (epoch, toc-tic))
+      save_path = saver.save(sess, pjoin(FLAGS.log_root, "model_epoch%d.ckpt" % epoch))
+      logging.info("Saved model to %s" % save_path)
+      # Symlink model.ckpt to the latest saved model
+      subprocess.check_call("ln -s %s %s" % (save_path, ckpt_path), shell=True)
+      # NOTE Lose last mod batch_size examples here
+      eval_cost = _Eval(sess, model, get_batch_reader(TRAIN_EVAL_DATA_PATH), vocab=vocab)
+      logging.info("Epoch %d eval cost: %f" % (epoch, eval_cost))
+      if eval_cost > prev_eval_cost:
+        # Load model from previous epoch
+        # Anneal by using model.set_lr
+        pass
+        eval_cost = prev_eval_cost
     sv.Stop()
   elif hps.mode == 'eval':
     model = seq2seq_attention_model.Seq2SeqAttentionModel(
         hps, vocab, num_gpus=FLAGS.num_gpus)
-    _Eval(model, get_batcher(), vocab=vocab)
+    model.build_graph()
+    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+      logging.info('Loading checkpoint %s', ckpt_path)
+      saver = tf.train.Saver()
+      saver.restore(sess, ckpt_path)
+      eval_cost = _Eval(sess, model, get_batch_reader(EVAL_DATA_PATH), vocab=vocab)
+      logging.info("Eval cost: %f" % eval_cost)
   elif hps.mode == 'decode':
     decode_mdl_hps = hps
     # Only need to restore the 1st step and reuse it since
@@ -237,10 +287,15 @@ def main(unused_argv):
     decode_mdl_hps = hps._replace(dec_timesteps=1)
     model = seq2seq_attention_model.Seq2SeqAttentionModel(
         decode_mdl_hps, vocab, num_gpus=FLAGS.num_gpus)
-    decoder = seq2seq_attention_decode.BSDecoder(model, get_batcher(), hps, vocab)
-    decoder.DecodeLoop()
+    model.build_graph()
+    with tf.Session(config=tf.ConfigProto(allow_soft_placement=True)) as sess:
+      logging.info('Loading checkpoint %s', ckpt_path)
+      saver = tf.train.Saver()
+      saver.restore(sess, ckpt_path)
+      decoder = seq2seq_attention_decode.BSDecoder(model, get_batch_reader(DECODE_DATA_PATH), hps, vocab)
+      decoder.DecodeLoop()
 
 
 if __name__ == '__main__':
-  tf.logging.set_verbosity(tf.logging.INFO)
+  logging.basicConfig(level=logging.INFO)
   tf.app.run()

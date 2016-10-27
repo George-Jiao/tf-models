@@ -23,6 +23,8 @@ import tensorflow as tf
 import beam_search
 import data
 
+import logging
+
 FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_integer('max_decode_steps', 1000000,
                             'Number of decoding steps.')
@@ -86,7 +88,6 @@ class BSDecoder(object):
       vocab: Vocabulary
     """
     self._model = model
-    self._model.build_graph()
     self._batch_reader = batch_reader
     self._hps = hps
     self._vocab = vocab
@@ -114,13 +115,13 @@ class BSDecoder(object):
     """
     ckpt_state = tf.train.get_checkpoint_state(FLAGS.log_root)
     if not (ckpt_state and ckpt_state.model_checkpoint_path):
-      tf.logging.info('No model to decode yet at %s', FLAGS.log_root)
+      logging.info('No model to decode yet at %s', FLAGS.log_root)
       return False
 
-    tf.logging.info('checkpoint path %s', ckpt_state.model_checkpoint_path)
+    logging.info('checkpoint path %s', ckpt_state.model_checkpoint_path)
     ckpt_path = os.path.join(
         FLAGS.log_root, os.path.basename(ckpt_state.model_checkpoint_path))
-    tf.logging.info('renamed checkpoint path %s', ckpt_path)
+    logging.info('renamed checkpoint path %s', ckpt_path)
     saver.restore(sess, ckpt_path)
 
     self._decode_io.ResetFiles()
@@ -159,7 +160,7 @@ class BSDecoder(object):
     end_p = decoded_output.find(data.SENTENCE_END, 0)
     if end_p != -1:
       decoded_output = decoded_output[:end_p]
-    tf.logging.info('article:  %s', article)
-    tf.logging.info('abstract: %s', abstract)
-    tf.logging.info('decoded:  %s', decoded_output)
+    logging.info('article:  %s', article)
+    logging.info('abstract: %s', abstract)
+    logging.info('decoded:  %s', decoded_output)
     self._decode_io.Write(abstract, decoded_output.strip())

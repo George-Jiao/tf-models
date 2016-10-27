@@ -30,6 +30,8 @@ from textsum_cfg import QUEUE_NUM_BATCH
 from textsum_cfg import GET_WAIT_SEC
 from textsum_cfg import FIRST_GET_WAIT_SEC
 
+import logging
+
 ModelInput = namedtuple('ModelInput',
                         'enc_input dec_input target enc_len dec_len '
                         'origin_article origin_abstract')
@@ -162,6 +164,9 @@ class Batcher(object):
       dec_inputs = [start_id]
 
       # Convert first N sentences to word IDs, stripping existing <s> and </s>.
+      # FIXME(zxie) Renable, just asserting # sentences never exceeds max
+      assert(self._max_article_sentences >= len(article_sentences))
+      assert(self._max_abstract_sentences >= len(abstract_sentences))
       for i in xrange(min(self._max_article_sentences,
                           len(article_sentences))):
         enc_inputs += data.GetWordIds(article_sentences[i], self._vocab)
@@ -172,23 +177,27 @@ class Batcher(object):
       # Filter out too-short input
       if (len(enc_inputs) < self._hps.min_input_len or
           len(dec_inputs) < self._hps.min_input_len):
-        tf.logging.warning('Drop an example - too short.\nenc:%d\ndec:%d',
+        logging.warning('Drop an example - too short.\nenc:%d\ndec:%d',
                            len(enc_inputs), len(dec_inputs))
         continue
 
       # If we're not truncating input, throw out too-long input
+      # FIXME(zxie) Reenable, right now just asserting False
       if not self._truncate_input:
         if (len(enc_inputs) > self._hps.enc_timesteps or
             len(dec_inputs) > self._hps.dec_timesteps):
-          tf.logging.warning('Drop an example - too long.\nenc:%d\ndec:%d',
+          assert(False)
+          logging.warning('Drop an example - too long.\nenc:%d\ndec:%d',
                              len(enc_inputs), len(dec_inputs))
           continue
       # If we are truncating input, do so if necessary
       else:
         if len(enc_inputs) > self._hps.enc_timesteps:
           enc_inputs = enc_inputs[:self._hps.enc_timesteps]
+          assert(False)
         if len(dec_inputs) > self._hps.dec_timesteps:
           dec_inputs = dec_inputs[:self._hps.dec_timesteps]
+          assert(False)
 
       # targets is dec_inputs without <s> at beginning, plus </s> at end
       targets = dec_inputs[1:]
@@ -215,7 +224,6 @@ class Batcher(object):
 
   def _FillBucketInputQueue(self):
     """Fill bucketed batches into the bucket_input_queue."""
-    print("Filling bucket queue")
     queue_gets = 0
     break_outer = False
     while not break_outer:
@@ -252,7 +260,7 @@ class Batcher(object):
         if t.is_alive():
           input_threads.append(t)
         else:
-          tf.logging.error('Found input thread dead.')
+          logging.error('Found input thread dead.')
           new_t = Thread(target=self._FillInputQueue)
           input_threads.append(new_t)
           input_threads[-1].daemon = True
@@ -264,7 +272,7 @@ class Batcher(object):
         if t.is_alive():
           bucketing_threads.append(t)
         else:
-          tf.logging.error('Found bucketing thread dead.')
+          logging.error('Found bucketing thread dead.')
           new_t = Thread(target=self._FillBucketInputQueue)
           bucketing_threads.append(new_t)
           bucketing_threads[-1].daemon = True
@@ -279,7 +287,7 @@ class Batcher(object):
         article_text = self._GetExFeatureText(e, self._article_key)
         abstract_text = self._GetExFeatureText(e, self._abstract_key)
       except ValueError:
-        tf.logging.error('Failed to get article or abstract from example')
+        logging.error('Failed to get article or abstract from example')
         continue
 
       yield (article_text, abstract_text)
