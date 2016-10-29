@@ -284,7 +284,7 @@ def main(unused_argv):
     prev_eval_cost = _Eval(sess, model, get_batch_reader(TRAIN_EVAL_DATA_PATH), vocab=vocab)
     logging.info("Starting eval cost: %f" % prev_eval_cost)
     eval_costs = list()
-    lr_value = hps.lr
+    lr_value = hps.lr if FLAGS.resume_lr is None else FLAGS.resume_lr
     anneals = 0
     for epoch in xrange(start_epoch, num_epochs+1):
       tic = time.time()
