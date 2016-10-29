@@ -13,4 +13,8 @@ TRAIN_EVAL_DATA_PATH ="data/giga.4000.valid"
 # Run full eval and decoding on full thing though
 EVAL_DATA_PATH = "data/giga.valid"
 DECODE_DATA_PATH = "data/giga.valid"
+# Using process_gigaword_data.py from other nlm-noising
 VOCAB_PATH = "data/giga.vocab"
+
+TRAIN_SRC_PATH = "/bak/alex_summary/train.src"
+TRAIN_TGT_PATH = "/bak/alex_summary/train.tgt"

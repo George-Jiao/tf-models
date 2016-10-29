@@ -7,6 +7,8 @@ Peter Liu (peterjliu@google.com, github:peterjliu)
 
 <b>Instructions for Modified Code</b>
 
+First create own `data/vocab` file. May need to add `<pad>` tokens, etc.
+
 See `textsum_train.sh`, `textsum_eval.sh`, and `textsum_decode.sh`.
 
 After decoding, run `convert_and_score_rouge.py` (see comments in file).

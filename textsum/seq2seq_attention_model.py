@@ -24,7 +24,7 @@ import seq2seq_lib
 import logging
 
 HParams = namedtuple('HParams',
-                     'mode, min_lr, lr, batch_size, '
+                     'mode, lr, batch_size, '
                      'enc_layers, enc_timesteps, dec_timesteps, '
                      'min_input_len, num_hidden, emb_dim, max_grad_norm, '
                      'num_softmax_samples')
@@ -235,9 +235,6 @@ class Seq2SeqAttentionModel(object):
               model_outputs, targets, loss_weights)
         tf.scalar_summary('loss', tf.minimum(12.0, self._loss))
 
-  def set_lr(self, sess, lr_value):
-    session.run(tf.assign(self._lr_rate, lr_value))
-
   def _add_train_op(self):
     """Sets self._train_op, op to run for training."""
     hps = self._hps
@@ -251,8 +248,8 @@ class Seq2SeqAttentionModel(object):
       grads, global_norm = tf.clip_by_global_norm(
           tf.gradients(self._loss, tvars), hps.max_grad_norm)
     tf.scalar_summary('global_norm', global_norm)
-    #optimizer = tf.train.GradientDescentOptimizer(self._lr_rate)
-    optimizer = tf.train.AdamOptimizer(self._lr_rate)
+    optimizer = tf.train.GradientDescentOptimizer(self._lr_rate)
+    #optimizer = tf.train.AdamOptimizer(self._lr_rate)
     tf.scalar_summary('learning rate', self._lr_rate)
     self._train_op = optimizer.apply_gradients(
         zip(grads, tvars), global_step=self.global_step, name='train_step')
@@ -298,3 +295,9 @@ class Seq2SeqAttentionModel(object):
     if self._hps.mode == 'train':
       self._add_train_op()
     self._summaries = tf.merge_all_summaries()
+
+  def set_lr(self, sess, lr_value):
+    sess.run(tf.assign(self._lr_rate, lr_value))
+
+  def set_global_step(self, sess, gstep):
+    sess.run(tf.assign(self.global_step, gstep))
