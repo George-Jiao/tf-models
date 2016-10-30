@@ -50,10 +50,14 @@ class Vocab(object):
         if len(pieces) != 2:
           sys.stderr.write('Bad line: %s\n' % line)
           continue
-        if pieces[0] in self._word_to_id:
-          raise ValueError('Duplicated word: %s.' % pieces[0])
-        self._word_to_id[pieces[0]] = self._count
-        self._id_to_word[self._count] = pieces[0]
+        token = pieces[0]
+        # Handle some preprocessing we did since conversion script depends on no "="
+        if token == "-eq-":
+          token = "="
+        if token in self._word_to_id:
+          raise ValueError('Duplicated word: %s.' % token)
+        self._word_to_id[token] = self._count
+        self._id_to_word[self._count] = token
         self._count += 1
         if self._count > max_size:
           raise ValueError('Too many words: >%d.' % max_size)

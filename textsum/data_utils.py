@@ -128,12 +128,12 @@ def corrupt_batch(x, y, lens, flags, ngram_data):
       # Compute p
       if flags.noise_scheme == "swap" and flags.swap_scheme in ["ad", "kn", "mkn"]:
         context = list()
-        context.append(ngd.id_to_token[x[row, col]])
+        context.append(ngd.vocab.IdToWord(x[row, col]))
         # Can also compute D = n1/(n1+n2) as described in Chen & Goodman
         total, distinct = continuations["total"][tuple(context)],\
                 continuations["distinct"][tuple(context)]
         if flags.swap_scheme != "mkn":
-          p = (delta / total) * distinct
+          p = (delta / float(total)) * distinct
         else:
           p = delta * (ngd.D1 * ngd.N1_lookup[context[0]] +\
                        ngd.D2 * ngd.N2_lookup[context[0]] +\
