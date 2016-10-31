@@ -45,7 +45,7 @@ from textsum_cfg import TRAIN_SRC_PATH
 from textsum_cfg import TRAIN_TGT_PATH
 
 from data_utils import NgramData
-from data_utils import corrupt_batch
+from data_utils import noise_batch
 from data_utils import add_blank_token
 
 import logging
@@ -53,7 +53,7 @@ import logging
 FLAGS = tf.app.flags.FLAGS
 tf.app.flags.DEFINE_string('article_key', 'article',
                            'tf.Example feature key for article.')
-tf.app.flags.DEFINE_string('abstract_key', 'headline',
+tf.app.flags.DEFINE_string('abstract_key', 'abstract',
                            'tf.Example feature key for abstract.')
 tf.app.flags.DEFINE_string('log_root', '', 'Directory for model root.')
 tf.app.flags.DEFINE_string('decode_dir', '', 'Directory for decode summaries.')
@@ -66,14 +66,14 @@ tf.app.flags.DEFINE_integer('max_article_sentences', 2,
 tf.app.flags.DEFINE_integer('max_abstract_sentences', 100,
                             'Max number of first sentences to use from the '
                             'abstract')
-tf.app.flags.DEFINE_integer('epochs', 1,
+tf.app.flags.DEFINE_integer('epochs', 1000,
                             'number of epochs to train for.')
 tf.app.flags.DEFINE_integer('beam_size', 4,
                             'beam size for beam search decoding.')
 tf.app.flags.DEFINE_bool('truncate_input', False,
                          'Truncate inputs that are too long. If False, '
                          'examples that are too long are discarded.')
-tf.app.flags.DEFINE_integer('num_gpus', 0, 'Number of gpus used.')
+tf.app.flags.DEFINE_integer('num_gpus', 1, 'Number of gpus used.')
 tf.app.flags.DEFINE_integer('random_seed', 111, 'A seed value for randomness.')
 
 tf.app.flags.DEFINE_string('noise_scheme', 'none', 'noising scheme (none, drop, swap)')
@@ -125,8 +125,8 @@ def _Train(sess, model, data_batcher, saver, summary_writer, epoch, src_ngd=None
 
     if FLAGS.delta > 0 and FLAGS.noise_scheme != "none":
       # NOTE just passing in article_batch twice since no output y in encoder
-      article_batch, _ = corrupt_batch(article_batch, article_batch, article_lens, FLAGS, src_ngd)
-      abstract_batch, targets = corrupt_batch(abstract_batch, targets, abstract_lens, FLAGS, tgt_ngd)
+      article_batch, _ = noise_batch(article_batch, article_batch, article_lens, FLAGS, src_ngd)
+      abstract_batch, targets = noise_batch(abstract_batch, targets, abstract_lens, FLAGS, tgt_ngd)
 
     toc = time.time()
     fetch_time = toc - tic
@@ -143,7 +143,7 @@ def _Train(sess, model, data_batcher, saver, summary_writer, epoch, src_ngd=None
     step += 1
     if step % 100 == 0:
       summary_writer.flush()
-  return running_avg_loss
+  return running_avg_loss, train_step
 
 
 def _Eval(sess, model, data_batcher, vocab=None):
@@ -288,7 +288,7 @@ def main(unused_argv):
     anneals = 0
     for epoch in xrange(start_epoch, num_epochs+1):
       tic = time.time()
-      _Train(sess, model, get_batch_reader(TRAIN_DATA_PATH), saver,
+      loss, epoch_step = _Train(sess, model, get_batch_reader(TRAIN_DATA_PATH), saver,
               summary_writer, epoch=epoch, src_ngd=src_ngram_data, tgt_ngd=tgt_ngram_data)
       toc = time.time()
       logging.info("Epochs %d took %fs" % (epoch, toc-tic))
@@ -300,6 +300,8 @@ def main(unused_argv):
       if eval_cost > prev_eval_cost:
         # Load model from best epoch (previous epoch assuming no patience)
         saver.restore(sess, ckpt_path)
+        # Restore overwrites global step as well
+        model.set_global_step(sess, epoch_step)
         # Anneal
         lr_value = lr_value / 2.0
         anneals = anneals + 1

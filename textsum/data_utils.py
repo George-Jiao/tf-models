@@ -68,8 +68,8 @@ def estimate_modkn_discounts(ngrams):
 
 def _read_tokens(filename):
   with open(filename, "r") as f:
-    # Note the extra space to ensure </s> is separate token
-    tokens = f.read().replace("\n", " </s>").split()
+    # Note the extra spaces to ensure </s> is separate token
+    tokens = f.read().replace("\n", " </s> ").split()
     return tokens
 
 def _compute_freqs(tokens, vocab):
@@ -114,7 +114,7 @@ class NgramData(object):
     bgs = nltk.bigrams(tokens)
     self.D1, self.D2, self.D3p, self.N1_lookup, self.N2_lookup, self.N3p_lookup = estimate_modkn_discounts(bgs)
 
-def corrupt_batch(x, y, lens, flags, ngram_data):
+def noise_batch(x, y, lens, flags, ngram_data):
   ngd = ngram_data
   delta = flags.delta
   if delta == 0.0:
